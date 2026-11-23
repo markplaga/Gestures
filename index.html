@@ -106,7 +106,7 @@ const WASM  = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm
 const MODEL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
 
 // ==GESTURES==
-const S = {scheme:'finger', hold:450, cooldown:1000, flip:false, preview:true, bar:true, num:true};
+const S = {scheme:'pointup', hold:450, cooldown:1000, flip:false, preview:true, bar:true, num:true};
 const GRACE_MS = 160;   // tolerate brief dropped detections while holding a pose
 const REARM_MS = 350;   // pose must be gone this long before the next trigger
 
@@ -294,26 +294,29 @@ function getUrl(i){
   return p;
 }
 function evict(){
+  const n = entries.length;
   for (const [k, p] of cache){
-    if (Math.abs(k - idx) > 3){ cache.delete(k); p.then(u => URL.revokeObjectURL(u)); }
+    const d = Math.abs(k - idx);
+    if (Math.min(d, n - d) > 3){ cache.delete(k); p.then(u => URL.revokeObjectURL(u)); }
   }
 }
 async function show(i){
   if (!entries.length) return;
-  idx = Math.max(0, Math.min(entries.length-1, i));
+  const n = entries.length;
+  idx = ((i % n) + n) % n;
   const mine = ++token;
   const url = await getUrl(idx);
   if (mine !== token) return;
   img.src = url; img.hidden = false; empty.hidden = true;
-  numEl.textContent = `${idx+1} / ${entries.length}`;
-  if (idx+1 < entries.length) getUrl(idx+1);
-  if (idx-1 >= 0) getUrl(idx-1);
+  numEl.textContent = `${idx+1} / ${n}`;
+  getUrl((idx+1) % n);
+  getUrl((idx-1+n) % n);
   evict();
 }
 function fire(act){
   if (!entries.length) return;
-  const to = act === 'next' ? idx+1 : idx-1;
-  if (to < 0 || to >= entries.length){ toast(act === 'next' ? 'Last slide' : 'First slide', 900); return; }
+  const n = entries.length;
+  const to = (idx + (act === 'next' ? 1 : -1) + n) % n;   // wrap around at either end
   show(to);
 }
 document.addEventListener('keydown', e => {
