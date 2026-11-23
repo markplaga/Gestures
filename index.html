@@ -85,6 +85,7 @@
 
   <label class="chk"><input type="checkbox" id="flip"> Flip left/right (if directions feel reversed)</label>
   <label class="chk"><input type="checkbox" id="prev"> Show camera preview</label>
+  <label class="chk"><input type="checkbox" id="autoChk"> Hide camera after 3 gestures (returns after 30 s idle)</label>
   <label class="chk"><input type="checkbox" id="barChk"> Show hold progress bar</label>
   <label class="chk"><input type="checkbox" id="numChk"> Show slide number</label>
 
@@ -106,7 +107,7 @@ const WASM  = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm
 const MODEL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
 
 // ==GESTURES==
-const S = {scheme:'pointup', hold:450, cooldown:1000, flip:false, preview:true, bar:true, num:true};
+const S = {scheme:'pointup', hold:450, cooldown:1000, flip:false, preview:true, autohide:true, bar:true, num:true};
 const GRACE_MS = 160;   // tolerate brief dropped detections while holding a pose
 const REARM_MS = 350;   // pose must be gone this long before the next trigger
 
@@ -224,7 +225,7 @@ function engine(act, now){
   const progress = Math.min(1, (now - candSince) / hold);
   setBar(armed ? progress : 0);
   if (armed && progress >= 1 && now - lastFire > S.cooldown){
-    fire(act);
+    fire(act); onGesture();
     lastFire = now; armed = false; cand = null; setBar(0);
     if (sc.onFire) sc.onFire();
   }
@@ -250,15 +251,25 @@ let toastT;
 function toast(msg, ms=2200){ toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(()=>toastEl.classList.remove('show'), ms); }
 function setStatus(t){ statusEl.textContent = t; }
 
+// auto-hide the camera preview once gestures are working; bring it back after 30 s with none
+let gestureCount = 0, autoHidden = false, idleT = null;
+function onGesture(){
+  clearTimeout(idleT);
+  idleT = setTimeout(() => { gestureCount = 0; if (autoHidden){ autoHidden = false; applySettings(); } }, 30000);
+  if (!S.autohide) return;
+  if (++gestureCount >= 3 && !autoHidden){ autoHidden = true; applySettings(); }
+}
+function resetAutoHide(){ clearTimeout(idleT); gestureCount = 0; autoHidden = false; }
+
 // ---------- settings ----------
 try { Object.assign(S, JSON.parse(localStorage.getItem('gestureSlideshow') || '{}')); } catch(e){}
 function save(){ try { localStorage.setItem('gestureSlideshow', JSON.stringify(S)); } catch(e){} }
 function applySettings(){
   $('scheme').value = S.scheme; $('hold').value = S.hold; $('cool').value = S.cooldown;
   $('holdV').textContent = S.hold; $('coolV').textContent = S.cooldown;
-  $('flip').checked = S.flip; $('prev').checked = S.preview; $('barChk').checked = S.bar; $('numChk').checked = S.num;
+  $('flip').checked = S.flip; $('prev').checked = S.preview; $('autoChk').checked = S.autohide; $('barChk').checked = S.bar; $('numChk').checked = S.num;
   $('hint').textContent = HINTS[S.scheme];
-  camEl.classList.toggle('off', !S.preview);
+  camEl.classList.toggle('off', !(S.preview && !autoHidden));
   numEl.style.display = S.num ? '' : 'none';
   if (!S.bar) setBar(0);
 }
@@ -268,6 +279,7 @@ $('hold').oninput = e => { S.hold = +e.target.value; applySettings(); save(); };
 $('cool').oninput = e => { S.cooldown = +e.target.value; applySettings(); save(); };
 $('flip').onchange = e => { S.flip = e.target.checked; save(); };
 $('prev').onchange = e => { S.preview = e.target.checked; applySettings(); save(); };
+$('autoChk').onchange = e => { S.autohide = e.target.checked; if (!S.autohide) resetAutoHide(); applySettings(); save(); };
 $('barChk').onchange = e => { S.bar = e.target.checked; applySettings(); save(); };
 $('numChk').onchange = e => { S.num = e.target.checked; applySettings(); save(); };
 
@@ -389,7 +401,7 @@ function stopCamera(){
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; video.srcObject = null;
   octx.clearRect(0, 0, overlay.width, overlay.height);
-  setBar(0); cand = null;
+  setBar(0); cand = null; resetAutoHide(); applySettings();
   $('camBtn').textContent = 'Start gestures';
   camLabel.textContent = 'camera off'; setStatus('Gestures off.');
 }
