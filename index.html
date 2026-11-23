@@ -71,6 +71,7 @@
       <option value="finger">One finger = next · Two fingers = back</option>
       <option value="thumbs">Thumbs up = next · Thumbs down = back</option>
       <option value="point">Point right = next · Point left = back</option>
+      <option value="pointup">Point up-right = next · Point up-left = back</option>
       <option value="pinch">Pinch &amp; drag left = next · right = back</option>
       <option value="tilt">Open palm tilt right = next · left = back</option>
     </select>
@@ -162,6 +163,22 @@ const SCHEMES = {
       return NONE;
     }
   },
+  pointup: {
+    hold: null,
+    detect(lm){
+      const f = fingers(lm);
+      if (f.index && !f.middle && !f.ring && !f.pinky){
+        const vx = lm[8].x-lm[5].x, vy = lm[8].y-lm[5].y;
+        if (vy >= 0) return {act:null, label:'pointing (aim up)'};
+        const raw = Math.atan2(vx, -vy) * 180 / Math.PI;   // 0 = straight up, + = image right
+        const ang = S.flip ? raw : -raw;                    // + = toward user's right
+        if (ang >= 22 && ang <= 75)   return {act:'next', label:'point up-right → next'};
+        if (ang <= -22 && ang >= -75) return {act:'prev', label:'point up-left → back'};
+        return {act:null, label:Math.abs(ang) < 22 ? 'pointing up (lean it)' : 'pointing (too flat)'};
+      }
+      return NONE;
+    }
+  },
   pinch: {
     hold: 60,
     detect(lm){
@@ -223,6 +240,7 @@ const HINTS = {
   finger:'Hold one finger straight up for next, or two fingers (peace sign) for back.',
   thumbs:'Thumb up for next, thumb down for back.',
   point:'Point your index finger sideways: to your right for next, to your left for back.',
+  pointup:'Point your index finger up and lean it diagonally: up-right (to your right) for next, up-left for back.',
   pinch:'Pinch thumb and index finger, then drag left for next or right for back. Release to reset.',
   tilt:'Hold an open palm up, then tilt it to your right for next, to your left for back.'
 };
