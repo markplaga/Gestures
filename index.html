@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Gesture Slideshow</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#000;color:#eee;font:16px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  #slide{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}
+  #empty{text-align:center;padding:24px;max-width:420px}
+  #empty h1{font-size:22px;margin:0 0 8px;font-weight:600}
+  #empty p{color:#9a9a9a;margin:0 0 20px}
+  button,select{font:inherit}
+  .btn{background:#2b6cff;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:600}
+  .btn.alt{background:#2a2a2a;color:#ddd}
+  #gear{position:fixed;top:calc(env(safe-area-inset-top) + 10px);right:10px;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.12);color:#fff;font-size:20px;opacity:.45;z-index:5}
+  #num{position:fixed;left:12px;bottom:calc(env(safe-area-inset-bottom) + 8px);font-size:13px;color:#bbb;opacity:.7;z-index:4;pointer-events:none}
+  #bar{position:fixed;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.75);transform:scaleX(0);transform-origin:left;z-index:6;pointer-events:none}
+  #cam{position:fixed;right:10px;bottom:calc(env(safe-area-inset-bottom) + 10px);width:150px;z-index:4;border-radius:10px;overflow:hidden;background:#111;border:1px solid #333}
+  #cam.off{opacity:0;pointer-events:none}
+  #camWrap{position:relative;width:100%;aspect-ratio:4/3}
+  #cam video,#cam canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  #camLabel{font-size:11px;padding:3px 6px;color:#ccc;background:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #panel{position:fixed;left:0;right:0;bottom:0;max-height:85%;overflow:auto;background:#161616;border-top:1px solid #333;border-radius:16px 16px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 16px);z-index:10;box-shadow:0 -10px 40px rgba(0,0,0,.6)}
+  #panel[hidden]{display:none}
+  #panel .field{margin:0 0 14px;display:block}
+  #panel .field>span{display:block;font-size:13px;color:#999;margin-bottom:4px}
+  #panel select{width:100%;padding:11px;border-radius:10px;background:#242424;color:#fff;border:1px solid #3a3a3a}
+  #panel input[type=range]{width:100%}
+  .chk{display:flex;align-items:center;gap:10px;margin:0 0 10px;color:#ddd}
+  .chk input{width:20px;height:20px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 10px}
+  #status{font-size:13px;color:#9a9a9a;min-height:18px;margin-top:6px}
+  #hint{font-size:13px;color:#888;margin:-6px 0 14px}
+  #toast{position:fixed;top:calc(env(safe-area-inset-top) + 14px);left:50%;transform:translateX(-50%);background:rgba(30,30,30,.92);color:#fff;padding:9px 16px;border-radius:20px;font-size:14px;z-index:20;pointer-events:none;opacity:0;transition:opacity .25s;max-width:90%;text-align:center}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <img id="slide" alt="" hidden>
+  <div id="empty">
+    <h1>Gesture Slideshow</h1>
+    <p>Load a zip of images, then flip through them with a hand gesture. No clicker needed.</p>
+    <button class="btn" id="loadBtn2">Load zip file(s)</button>
+  </div>
+</div>
+
+<button id="gear" aria-label="Settings">&#9881;</button>
+<div id="num"></div>
+<div id="bar"></div>
+
+<div id="cam">
+  <div id="camWrap"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+  <div id="camLabel">camera off</div>
+</div>
+
+<div id="panel" hidden>
+  <div class="row">
+    <button class="btn" id="loadBtn">Load zip file(s)</button>
+    <button class="btn alt" id="camBtn">Start gestures</button>
+  </div>
+
+  <label class="field"><span>Gesture set</span>
+    <select id="scheme">
+      <option value="finger">One finger = next · Two fingers = back</option>
+      <option value="thumbs">Thumbs up = next · Thumbs down = back</option>
+      <option value="point">Point right = next · Point left = back</option>
+      <option value="pinch">Pinch &amp; drag left = next · right = back</option>
+      <option value="tilt">Open palm tilt right = next · left = back</option>
+    </select>
+  </label>
+  <div id="hint"></div>
+
+  <label class="field"><span>Hold time: <b id="holdV"></b> ms</span>
+    <input type="range" id="hold" min="150" max="1000" step="50"></label>
+  <label class="field"><span>Cooldown between slides: <b id="coolV"></b> ms</span>
+    <input type="range" id="cool" min="300" max="3000" step="100"></label>
+
+  <label class="chk"><input type="checkbox" id="flip"> Flip left/right (if directions feel reversed)</label>
+  <label class="chk"><input type="checkbox" id="prev"> Show camera preview</label>
+  <label class="chk"><input type="checkbox" id="barChk"> Show hold progress bar</label>
+  <label class="chk"><input type="checkbox" id="numChk"> Show slide number</label>
+
+  <div class="row">
+    <button class="btn alt" id="fsBtn">Fullscreen</button>
+    <button class="btn alt" id="closeBtn">Close</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<input type="file" id="file" accept=".zip,application/zip" multiple hidden>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="module">
+import {FilesetResolver, GestureRecognizer} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const WASM  = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
+
+// ==GESTURES==
+const S = {scheme:'finger', hold:450, cooldown:1000, flip:false, preview:true, bar:true, num:true};
+const GRACE_MS = 160;   // tolerate brief dropped detections while holding a pose
+const REARM_MS = 350;   // pose must be gone this long before the next trigger
+
+const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+// Camera frames are not mirrored, so the user's right is toward smaller x.
+const toUserX = dx => S.flip ? dx : -dx;
+const handSize = lm => dist(lm[0], lm[9]) || 0.001;
+
+function fingers(lm){
+  const w = lm[0];
+  const ext = (tip, pip) => dist(lm[tip], w) > dist(lm[pip], w) * 1.1;
+  return {index:ext(8,6), middle:ext(12,10), ring:ext(16,14), pinky:ext(20,18)};
+}
+const NONE = {act:null, label:'—'};
+
+let pinchStart = null, pinchLocked = false;
+
+const SCHEMES = {
+  finger: {
+    hold: null,
+    detect(lm){
+      const f = fingers(lm);
+      const vx = lm[8].x-lm[5].x, vy = lm[8].y-lm[5].y;
+      const up = vy < 0 && Math.abs(vy) > Math.abs(vx);
+      if (f.index && !f.middle && !f.ring && !f.pinky)
+        return up ? {act:'next', label:'1 finger → next'} : {act:null, label:'1 finger (point up)'};
+      if (f.index && f.middle && !f.ring && !f.pinky)
+        return up ? {act:'prev', label:'2 fingers → back'} : {act:null, label:'2 fingers (point up)'};
+      return NONE;
+    }
+  },
+  thumbs: {
+    hold: null,
+    detect(lm, g){
+      if (g && g.score >= 0.6){
+        if (g.categoryName === 'Thumb_Up')   return {act:'next', label:'thumb up → next'};
+        if (g.categoryName === 'Thumb_Down') return {act:'prev', label:'thumb down → back'};
+      }
+      return NONE;
+    }
+  },
+  point: {
+    hold: null,
+    detect(lm){
+      const f = fingers(lm);
+      if (f.index && !f.middle && !f.ring && !f.pinky){
+        const vx = lm[8].x-lm[5].x, vy = lm[8].y-lm[5].y;
+        if (Math.abs(vx) > 1.6*Math.abs(vy)){
+          const right = toUserX(vx) > 0;
+          return right ? {act:'next', label:'point right → next'} : {act:'prev', label:'point left → back'};
+        }
+        return {act:null, label:'pointing (turn sideways)'};
+      }
+      return NONE;
+    }
+  },
+  pinch: {
+    hold: 60,
+    detect(lm){
+      const pinching = dist(lm[4], lm[8]) < 0.4 * handSize(lm);
+      if (!pinching){ pinchStart = null; pinchLocked = false; return NONE; }
+      if (pinchLocked) return {act:null, label:'release pinch'};
+      const mx = (lm[4].x + lm[8].x) / 2;
+      if (pinchStart === null) pinchStart = mx;
+      const disp = toUserX(mx - pinchStart);   // + = user's right
+      if (disp < -0.12) return {act:'next', label:'drag left → next'};
+      if (disp >  0.12) return {act:'prev', label:'drag right → back'};
+      return {act:null, label:'pinched — drag'};
+    },
+    onFire(){ pinchLocked = true; pinchStart = null; }
+  },
+  tilt: {
+    hold: null,
+    detect(lm){
+      const f = fingers(lm);
+      if (!(f.index && f.middle && f.ring && f.pinky)) return NONE;
+      const vx = lm[9].x-lm[0].x, vy = lm[9].y-lm[0].y;
+      const raw = Math.atan2(vx, -vy) * 180 / Math.PI;   // + = leaning to image right
+      const ang = S.flip ? raw : -raw;                    // + = tilted toward user's right
+      if (ang >  30) return {act:'next', label:'tilt right → next'};
+      if (ang < -30) return {act:'prev', label:'tilt left → back'};
+      return {act:null, label:'open palm (tilt)'};
+    }
+  }
+};
+
+// Hold / cooldown / re-arm state machine shared by every gesture set
+let cand = null, candSince = 0, lastSeen = -1e9, armed = true, lastFire = -1e9;
+function engine(act, now){
+  const sc = SCHEMES[S.scheme];
+  const hold = sc.hold ?? S.hold;
+  if (act === null){
+    if (now - lastSeen > GRACE_MS){ cand = null; candSince = 0; setBar(0); }
+    if (now - lastSeen > REARM_MS) armed = true;
+    return;
+  }
+  lastSeen = now;
+  if (act !== cand){ cand = act; candSince = now; }
+  const progress = Math.min(1, (now - candSince) / hold);
+  setBar(armed ? progress : 0);
+  if (armed && progress >= 1 && now - lastFire > S.cooldown){
+    fire(act);
+    lastFire = now; armed = false; cand = null; setBar(0);
+    if (sc.onFire) sc.onFire();
+  }
+}
+// ==/GESTURES==
+
+// ---------- DOM ----------
+const $ = id => document.getElementById(id);
+const img = $('slide'), empty = $('empty'), numEl = $('num'), barEl = $('bar');
+const panel = $('panel'), statusEl = $('status'), toastEl = $('toast');
+const video = $('video'), overlay = $('overlay'), camEl = $('cam'), camLabel = $('camLabel');
+const HINTS = {
+  finger:'Hold one finger straight up for next, or two fingers (peace sign) for back.',
+  thumbs:'Thumb up for next, thumb down for back.',
+  point:'Point your index finger sideways: to your right for next, to your left for back.',
+  pinch:'Pinch thumb and index finger, then drag left for next or right for back. Release to reset.',
+  tilt:'Hold an open palm up, then tilt it to your right for next, to your left for back.'
+};
+
+function setBar(p){ barEl.style.transform = `scaleX(${S.bar ? p : 0})`; }
+let toastT;
+function toast(msg, ms=2200){ toastEl.textContent = msg; toastEl.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(()=>toastEl.classList.remove('show'), ms); }
+function setStatus(t){ statusEl.textContent = t; }
+
+// ---------- settings ----------
+try { Object.assign(S, JSON.parse(localStorage.getItem('gestureSlideshow') || '{}')); } catch(e){}
+function save(){ try { localStorage.setItem('gestureSlideshow', JSON.stringify(S)); } catch(e){} }
+function applySettings(){
+  $('scheme').value = S.scheme; $('hold').value = S.hold; $('cool').value = S.cooldown;
+  $('holdV').textContent = S.hold; $('coolV').textContent = S.cooldown;
+  $('flip').checked = S.flip; $('prev').checked = S.preview; $('barChk').checked = S.bar; $('numChk').checked = S.num;
+  $('hint').textContent = HINTS[S.scheme];
+  camEl.classList.toggle('off', !S.preview);
+  numEl.style.display = S.num ? '' : 'none';
+  if (!S.bar) setBar(0);
+}
+applySettings();
+$('scheme').onchange = e => { S.scheme = e.target.value; pinchStart = null; pinchLocked = false; cand = null; armed = true; applySettings(); save(); };
+$('hold').oninput = e => { S.hold = +e.target.value; applySettings(); save(); };
+$('cool').oninput = e => { S.cooldown = +e.target.value; applySettings(); save(); };
+$('flip').onchange = e => { S.flip = e.target.checked; save(); };
+$('prev').onchange = e => { S.preview = e.target.checked; applySettings(); save(); };
+$('barChk').onchange = e => { S.bar = e.target.checked; applySettings(); save(); };
+$('numChk').onchange = e => { S.num = e.target.checked; applySettings(); save(); };
+
+$('gear').onclick = () => { panel.hidden = !panel.hidden; };
+$('closeBtn').onclick = () => { panel.hidden = true; };
+const fsOK = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+if (!fsOK) $('fsBtn').style.display = 'none';
+$('fsBtn').onclick = () => {
+  const d = document;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
+};
+
+// ---------- slides ----------
+const IMG_EXT = {png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', bmp:'image/bmp', svg:'image/svg+xml', avif:'image/avif'};
+const collator = new Intl.Collator(undefined, {numeric:true, sensitivity:'base'});
+let entries = [], idx = 0, cache = new Map(), token = 0;
+
+function getUrl(i){
+  if (cache.has(i)) return cache.get(i);
+  const e = entries[i];
+  const p = e.obj.async('blob').then(b => URL.createObjectURL(new Blob([b], {type:e.mime})));
+  cache.set(i, p);
+  return p;
+}
+function evict(){
+  for (const [k, p] of cache){
+    if (Math.abs(k - idx) > 3){ cache.delete(k); p.then(u => URL.revokeObjectURL(u)); }
+  }
+}
+async function show(i){
+  if (!entries.length) return;
+  idx = Math.max(0, Math.min(entries.length-1, i));
+  const mine = ++token;
+  const url = await getUrl(idx);
+  if (mine !== token) return;
+  img.src = url; img.hidden = false; empty.hidden = true;
+  numEl.textContent = `${idx+1} / ${entries.length}`;
+  if (idx+1 < entries.length) getUrl(idx+1);
+  if (idx-1 >= 0) getUrl(idx-1);
+  evict();
+}
+function fire(act){
+  if (!entries.length) return;
+  const to = act === 'next' ? idx+1 : idx-1;
+  if (to < 0 || to >= entries.length){ toast(act === 'next' ? 'Last slide' : 'First slide', 900); return; }
+  show(to);
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') fire('next');
+  else if (e.key === 'ArrowLeft') fire('prev');
+});
+
+async function loadFiles(files){
+  if (!files.length) return;
+  setStatus('Reading zip…'); toast('Reading zip…');
+  const found = [];
+  try {
+    for (const f of files){
+      const zip = await JSZip.loadAsync(f);
+      const list = [];
+      zip.forEach((path, obj) => {
+        if (obj.dir || path.startsWith('__MACOSX/')) return;
+        const base = path.split('/').pop();
+        if (base.startsWith('.')) return;
+        const ext = base.split('.').pop().toLowerCase();
+        if (IMG_EXT[ext]) list.push({path, obj, mime:IMG_EXT[ext]});
+      });
+      list.sort((a,b) => collator.compare(a.path, b.path));
+      found.push(...list);
+    }
+  } catch(err){ toast('Could not read that zip'); setStatus('Error: ' + err.message); return; }
+  if (!found.length){ toast('No images found in that zip'); setStatus('No images found.'); return; }
+  for (const p of cache.values()) p.then(u => URL.revokeObjectURL(u));
+  cache.clear(); entries = found;
+  await show(0);
+  panel.hidden = true;
+  setStatus(`${entries.length} images loaded.`);
+  toast(`${entries.length} slides loaded`);
+  if (!running) startCamera();
+}
+$('file').onchange = e => { loadFiles([...e.target.files]); e.target.value = ''; };
+$('loadBtn').onclick = $('loadBtn2').onclick = () => $('file').click();
+
+// ---------- camera + hand tracking ----------
+let recognizer = null, stream = null, running = false, lastVT = -1, starting = false;
+const octx = overlay.getContext('2d');
+
+async function startCamera(){
+  if (running || starting) return;
+  starting = true;
+  try {
+    setStatus('Loading hand tracking…'); camLabel.textContent = 'loading…';
+    if (!recognizer){
+      const fs = await FilesetResolver.forVisionTasks(WASM);
+      const opts = d => ({baseOptions:{modelAssetPath:MODEL, delegate:d}, runningMode:'VIDEO', numHands:1});
+      try { recognizer = await GestureRecognizer.createFromOptions(fs, opts('GPU')); }
+      catch(e){ recognizer = await GestureRecognizer.createFromOptions(fs, opts('CPU')); }
+    }
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:{ideal:640}, height:{ideal:480}}, audio:false});
+    video.srcObject = stream;
+    await video.play();
+    overlay.width = video.videoWidth || 640; overlay.height = video.videoHeight || 480;
+    running = true; lastVT = -1;
+    $('camBtn').textContent = 'Stop gestures';
+    setStatus('Gestures on.'); camLabel.textContent = '—';
+    requestAnimationFrame(loop);
+  } catch(err){
+    setStatus('Camera/tracking error: ' + err.message);
+    camLabel.textContent = 'camera off';
+    toast('Could not start camera');
+  } finally { starting = false; }
+}
+function stopCamera(){
+  running = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; video.srcObject = null;
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  setBar(0); cand = null;
+  $('camBtn').textContent = 'Start gestures';
+  camLabel.textContent = 'camera off'; setStatus('Gestures off.');
+}
+$('camBtn').onclick = () => running ? stopCamera() : startCamera();
+
+function draw(lm){
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!lm) return;
+  octx.fillStyle = '#4dff9a';
+  for (const p of lm){ octx.beginPath(); octx.arc(p.x*overlay.width, p.y*overlay.height, 4, 0, 6.283); octx.fill(); }
+}
+function loop(){
+  if (!running) return;
+  if (video.readyState >= 2 && video.currentTime !== lastVT){
+    lastVT = video.currentTime;
+    const now = performance.now();
+    let res = null;
+    try { res = recognizer.recognizeForVideo(video, now); } catch(e){}
+    if (res && res.landmarks && res.landmarks.length){
+      const lm = res.landmarks[0];
+      const g = res.gestures && res.gestures[0] && res.gestures[0][0];
+      const r = SCHEMES[S.scheme].detect(lm, g);
+      camLabel.textContent = r.label;
+      draw(lm);
+      engine(r.act, now);
+    } else {
+      camLabel.textContent = '—'; draw(null);
+      if (S.scheme === 'pinch'){ pinchStart = null; pinchLocked = false; }
+      engine(null, now);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && running && video.paused) video.play().catch(()=>{});
+});
+</script>
+</body>
+</html>
