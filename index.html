@@ -45,9 +45,22 @@
   #hint{font-size:13px;color:#888;margin:-6px 0 14px}
   #toast{position:fixed;top:calc(env(safe-area-inset-top) + 14px);left:50%;transform:translateX(-50%);background:rgba(30,30,30,.92);color:#fff;padding:9px 16px;border-radius:20px;font-size:14px;z-index:20;pointer-events:none;opacity:0;transition:opacity .25s;max-width:90%;text-align:center}
   #toast.show{opacity:1}
+
+/* PWA-UPDATE-SYSTEM v1 */
+[hidden]{display:none!important}
+.update-bar{position:fixed;top:calc(env(safe-area-inset-top, 0px) + 10px);left:10px;right:10px;z-index:60;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;background:#111;border:1.5px solid #2b6cff;border-radius:10px;padding:12px 14px;font-size:14px;color:#eee}
+.update-bar .row{display:flex;gap:8px}
+.appfoot{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom, 0px) + 10px);z-index:60;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;font-size:13px;color:#9a9a9a;background:rgba(0,0,0,.75);border-radius:8px;padding:8px 10px}
+.appfoot button{background:#2a2a2a;color:#ddd;border:0;border-radius:8px;padding:6px 10px;font:inherit;cursor:pointer}
 </style>
 </head>
 <body>
+<!-- PWA-UPDATE-SYSTEM v1 -->
+<div class="update-bar" id="updateBar" role="status" aria-live="polite" hidden>
+  <span id="updateText">A new version of Gesture Slideshow is ready. Your settings and saved work are kept.</span>
+  <span class="row"><button class="btn" id="updateNow">Update now</button><button class="btn alt" id="updateLater">Later</button></span>
+</div>
+
 
 <div id="stage">
   <img id="slide" alt="" hidden>
@@ -446,6 +459,66 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && running && video.paused) video.play().catch(()=>{});
 });
 </script>
-<script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }</script>
+<!-- PWA-UPDATE-SYSTEM v1 -->
+<footer class="appfoot">
+  <span>Gesture Slideshow <b>v<span id="appVersion"></span></b></span>
+  <span id="updateStatus"></span>
+  <button id="checkUpdates" hidden>Check for updates</button>
+</footer>
+
+<script>
+// PWA-UPDATE-SYSTEM v1: auto-update, version banner, Check for updates. Do not remove this line.
+const APP_VERSION='1.0.0';
+(function(){
+  document.getElementById('appVersion').textContent=APP_VERSION;
+  const status=document.getElementById('updateStatus'),checkBtn=document.getElementById('checkUpdates'),bar=document.getElementById('updateBar');
+  const say=t=>{status.textContent=t;};
+  if(!('serviceWorker' in navigator)||!/^https?:$/.test(location.protocol))return;
+  checkBtn.hidden=false;
+  const newer=(a,b)=>{const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0);}return false;};
+  let reg=null,userAsked=false,reloading=false,remote=null;
+  function showBar(ver){
+    let later=null;try{later=sessionStorage.getItem('gestures-update-later');}catch(e){}
+    document.getElementById('updateText').textContent=`Gesture Slideshow ${ver?'v'+ver+' ':''}is ready. Updating keeps your settings and saved work.`;
+    if(later&&!userAsked)return;
+    bar.hidden=false;say('An update is ready.');
+  }
+  function waitingReady(w){if(w&&navigator.serviceWorker.controller)showBar(remote&&remote.version);}
+  function track(w){if(!w)return;w.addEventListener('statechange',()=>{if(w.state==='installed')waitingReady(w);});}
+  async function fetchRemote(){try{const r=await fetch('version.json?t='+Date.now(),{cache:'no-store'});if(r.ok)remote=await r.json();}catch(e){}return remote;}
+  async function check(manual){
+    if(manual){userAsked=true;say('Checking\u2026');checkBtn.disabled=true;}
+    try{
+      const info=await fetchRemote();
+      if(reg){await reg.update().catch(()=>{});}
+      if(reg&&reg.waiting&&navigator.serviceWorker.controller){showBar(info&&info.version);if(manual)say('An update is ready.');}
+      else if(info&&newer(info.version,APP_VERSION)){if(manual)say(`Version ${info.version} found. Downloading\u2026`);}
+      else if(manual)say(info?`You have the latest version (${APP_VERSION}).`:'Could not reach the server. Try again when you are online.');
+    }finally{if(manual)checkBtn.disabled=false;}
+  }
+  function applyUpdate(){
+    try{if(typeof save==='function')save();}catch(e){}
+    bar.hidden=true;say('Updating\u2026');
+    const w=reg&&reg.waiting;
+    if(w){userAsked=true;w.postMessage({type:'SKIP_WAITING'});
+      setTimeout(()=>{if(!reloading){reloading=true;location.reload();}},4000);
+    }else{reloading=true;location.reload();}
+  }
+  document.getElementById('updateNow').onclick=applyUpdate;
+  document.getElementById('updateLater').onclick=()=>{bar.hidden=true;try{sessionStorage.setItem('gestures-update-later',(remote&&remote.version)||'?');}catch(e){}say('Update postponed. You will be asked again next time you open the app, or tap Check for updates.');};
+  checkBtn.onclick=()=>check(true);
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloading||!userAsked)return;reloading=true;location.reload();});
+  window.addEventListener('load',async()=>{
+    try{reg=await navigator.serviceWorker.register('sw.js',{updateViaCache:'none'});}catch(e){return;}
+    if(reg.waiting)waitingReady(reg.waiting);
+    track(reg.installing);
+    reg.addEventListener('updatefound',()=>track(reg.installing));
+    check(false);
+  });
+  let last=Date.now();
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-last>5*60e3){last=Date.now();check(false);}});
+  setInterval(()=>{if(document.visibilityState==='visible'){last=Date.now();check(false);}},60*60e3);
+})();
+</script>
 </body>
 </html>
